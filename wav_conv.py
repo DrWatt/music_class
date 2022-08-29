@@ -7,8 +7,9 @@ import pandas as pd
 import os
 import soundfile as sf
 import matplotlib.pyplot as plt
-
+from sympy.ntheory import factorint
 fs2read = 22050
+audiolength = 30
 #%%
 
 # with wave.open("genres_original/blues/blues.00000.wav") as w:
@@ -21,6 +22,7 @@ fs2read = 22050
 
     #dataframe = np.zeros((1,441000))
 def createnewdata(outtype=np.float64,sr=689):
+    #1378
     i = 0
     dataframe = pd.DataFrame()
     for root, dirs, files in os.walk("genres_original", topdown=False):
@@ -32,10 +34,14 @@ def createnewdata(outtype=np.float64,sr=689):
                 data, samplerate = sf.read(os.path.join(root,song),always_2d=True,dtype=np.float64)
                 #print(data.shape)
                 n = len(data)
-                D = int(samplerate/1378)
+                D = int(samplerate/689)
                 single_channel = np.array([data[i][0] for i in range(n)])
                 #print(single_channel.shape)
                 downsampled_data = single_channel[::D]
+                maxbuffersize = 689 * audiolength
+                downsampled_data = downsampled_data[:maxbuffersize]
+                split_factor = list(factorint(maxbuffersize))[-1]
+                split = np.array_split(downsampled_data,split_factor)
                 #print(downsampled_data.shape)
                 # with wave.open(os.path.join(root,song)) as w:
                 #     print(os.path.join(root,song))
@@ -47,8 +53,13 @@ def createnewdata(outtype=np.float64,sr=689):
                 #downsampled_data.reshape(1,689)
                 genre = song.split('.')[0]
                 #pdframe = pd.concat([pd.DataFrame(downsampled_data),pd.Series(genre)],axis=0,ignore_index=True).T
-                X = pd.DataFrame(downsampled_data).T
-                X.insert(0,"label",pd.Series(genre))
+                X = pd.DataFrame()
+                for j in split:
+                    temp = pd.DataFrame(j).T
+                    temp.insert(0,"label",pd.Series(genre))
+                    X = pd.concat([X,temp],axis=0,ignore_index=True)
+                # X = pd.DataFrame(downsampled_data).T
+                # X.insert(0,"label",pd.Series(genre))
                 #print(pdframe.shape)
                 #     #pdframe = pd.DataFrame(frame)
                 dataframe = pd.concat([dataframe,X],axis=0,ignore_index=True)
@@ -56,7 +67,7 @@ def createnewdata(outtype=np.float64,sr=689):
                 print(i)
                 
     dataframe.fillna(0, inplace=True)
-    dataframe.to_csv("/data/music_data/compressed_wavs_1378.csv",header=False, index=False)
+    dataframe.to_csv("/data/music_data/compressed_wavs_689_split.csv",header=False, index=False)
     return dataframe
 #%%
 
