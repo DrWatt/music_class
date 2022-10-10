@@ -8,8 +8,10 @@ import os
 import soundfile as sf
 import matplotlib.pyplot as plt
 from sympy.ntheory import factorint
+import librosa
 fs2read = 22050
 audiolength = 30
+genres = ['blues','classical','country','disco','hiphop','jazz','metal','pop','reggae','rock']
 #%%
 
 # with wave.open("genres_original/blues/blues.00000.wav") as w:
@@ -21,7 +23,7 @@ audiolength = 30
 # deserialized_bytes = np.frombuffer(frames,dtype=np.int8)
 
     #dataframe = np.zeros((1,441000))
-def createnewdata(outtype=np.float64,sr=689):
+def createnewdata(outtype=np.float64,sr=2756):
     #1378
     i = 0
     dataframe = pd.DataFrame()
@@ -34,11 +36,12 @@ def createnewdata(outtype=np.float64,sr=689):
                 data, samplerate = sf.read(os.path.join(root,song),always_2d=True,dtype=np.float64)
                 #print(data.shape)
                 n = len(data)
-                D = int(samplerate/689)
+                D = int(samplerate/sr)
+                # print(samplerate)
                 single_channel = np.array([data[i][0] for i in range(n)])
                 #print(single_channel.shape)
                 downsampled_data = single_channel[::D]
-                maxbuffersize = 689 * audiolength
+                maxbuffersize = sr * audiolength
                 downsampled_data = downsampled_data[:maxbuffersize]
                 split_factor = list(factorint(maxbuffersize))[-1]
                 split = np.array_split(downsampled_data,split_factor)
@@ -67,7 +70,7 @@ def createnewdata(outtype=np.float64,sr=689):
                 print(i)
                 
     dataframe.fillna(0, inplace=True)
-    dataframe.to_csv("/data/music_data/compressed_wavs_689_split.csv",header=False, index=False)
+    dataframe.to_csv("/data/music_data/compressed_wavs_2756_split.csv",header=False, index=False)
     return dataframe
 #%%
 
@@ -108,3 +111,46 @@ def soundfiletoy():
     print("Downsampling factor : {}".format(D))
     new_data = data[::D] #getting the downsampled data#Writing the new data into a wav file
     sf.write(wavCompressedFile, new_data, int(Fs / D), 'PCM_16')
+    
+    
+#%%
+def mfcc(downsampling_factor = 1):
+    dataset = []
+    
+    for root, dirs, files in os.walk("genres_original", topdown=False):
+            #for name in files:
+            #    print(os.path.join(root, name))
+            # print(files)
+            for song in files:
+                print(song)
+                data, samplerate = sf.read(os.path.join(root,song),always_2d=False,dtype=np.float64)
+                #print(data.shape)
+                n = len(data)
+                D = int(downsampling_factor)
+                final_sr = int(samplerate/downsampling_factor)
+                downsampled_data = data[::D]
+                maxbuffersize = final_sr * audiolength
+                downsampled_data = downsampled_data[:maxbuffersize]
+                factors = list(factorint(maxbuffersize))
+                split_factor = factors[-1]
+                if split_factor < 10 and 2 in factors: split_factor = split_factor * 2
+                print(split_factor)
+                split = np.array_split(downsampled_data,split_factor)
+                genre = genres.index(song.split('.')[0])
+                
+                for j in split:
+                    
+                    temp = librosa.feature.mfcc(y=j,sr=final_sr)
+                    templabel = np.full((temp.shape[0],1),genre)
+                    temp = np.append(temp,templabel,axis=1)
+                    dataset.append(temp)
+                
+    dataset = np.array(dataset)
+    np.save("/data/music_data/mfcc_wavs_split.npy",dataset)
+    return dataset
+
+#%%
+#data, samplerate = sf.read("/home/marco/NN-projects/music_class/genres_original/jazz/jazz.00001.wav")
+#y, sr = librosa.load("/home/marco/NN-projects/music_class/genres_original/jazz/jazz.00001.wav")
+#dataset = pd.read_csv("/data/music_data/compressed_wavs_2756_split.csv",header=None,index_col=None)
+#mf = librosa.feature.mfcc(y=data,sr=sr)

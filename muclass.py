@@ -19,21 +19,23 @@ os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 
 
-seed = 1
+seed = 12345
 np.random.seed(seed)
 tf.random.set_seed(seed)
 #%%
 def load_data():
-    dataset = pd.read_csv("/data/music_data/compressed_wavs_1378_split_int.csv",header=None,index_col=None)
-    X = (dataset.drop(dataset.columns[0], axis=1, inplace=False) + 32768)/65535
+    # dataset = pd.read_csv("/data/music_data/compressed_wavs_1378_split_int.csv",header=None,index_col=None)
+    # X = (dataset.drop(dataset.columns[0], axis=1, inplace=False) + 32768)/65535
+    dataset = pd.read_csv("/data/music_data/compressed_wavs_2756_split.csv",header=None,index_col=None)
+    X = dataset.drop(dataset.columns[0], axis=1, inplace=False)
     Y = dataset[dataset.columns[0]]
     encoder = LabelEncoder()
     encoded_Y = encoder.fit_transform(Y)
     Xtrain, Xtest, Ytrain, Ytest = train_test_split(X,encoded_Y,test_size=0.2,random_state=seed)
-    Xtrain = Xtrain.values.reshape(len(Xtrain),len(Xtrain.columns),1)
-    Xtest = Xtest.values.reshape(len(Xtest),len(Xtest.columns),1)
+    #Xtrain = Xtrain.values.reshape(len(Xtrain),len(Xtrain.columns),1)
+    #Xtest = Xtest.values.reshape(len(Xtest),len(Xtest.columns),1)
     
-    return Xtrain, Xtest, Ytrain, Ytest
+    return Xtrain.values, Xtest.values, Ytrain, Ytest
 #%%
 
 class LRCallback(Callback):
@@ -50,11 +52,11 @@ print_lr = LRCallback()
 
 class HyperStudent(keras_tuner.HyperModel):
 
-    def __init__(self, input_shape, training_loss, param_threshold=(4500,5000)):#  4500,5000
+    def __init__(self, input_shape, training_loss, param_threshold=(50000,100000)):#  4500,5000
         self.input_shape = input_shape
         self.training_loss = training_loss
-        self.num_layers = [2,3,4]
-        self.num_params = [4,8,16,32, 64]
+        self.num_layers = [2,3,4,5]
+        self.num_params = [16,32, 64,128]
 
         model_configurations = []
         self.model_configurations = []
@@ -102,7 +104,7 @@ class HyperStudent(keras_tuner.HyperModel):
         
         inputs = tf.keras.layers.Input(shape=(numframes,1,),name="input_1")
         
-        x = tf.keras.layers.LSTM(64,input_shape=[None,numframes,1],return_sequences=False)(inputs)
+        x = tf.keras.layers.LSTM(128,return_sequences=False)(inputs)
 
         config_index = hp.Int("config_indx", min_value=0, max_value=len(self.model_configurations)-1, step=1)
 
@@ -111,7 +113,7 @@ class HyperStudent(keras_tuner.HyperModel):
         for units in self.model_configurations[config_index]:
             # Number of units of each layer are
             # different hyperparameters with different names.
-            x = tf.keras.layers.Dense(units=units,activation='relu')(x)
+            x = tf.keras.layers.Dense(units=units,activation='tanh')(x)
         
         # The last layer contains 1 unit, which
         # represents the learned loss value
@@ -131,17 +133,17 @@ class HyperStudent(keras_tuner.HyperModel):
 
 #%%
 
-def optimisation(x_train,y_train, training_loss):
+def optimisation(x_train,Xtest,y_train, Ytest, training_loss):
 
     hypermodel = HyperStudent(x_train.shape, training_loss)
-    #tuner = keras_tuner.Hyperband(
-    #      hypermodel,
-    #      objective='val_loss',
-    #      #max_trials=len(hypermodel.model_configurations),
-    #      overwrite=True,
-    #      directory='output/hyper_tuning',
-    #      max_epochs=100
-    #      )
+    # tuner = keras_tuner.Hyperband(
+    #       hypermodel,
+    #       objective='val_loss',
+    #       #max_trials=len(hypermodel.model_configurations),
+    #       overwrite=True,
+    #       directory='output/hyper_tuning',
+    #       max_epochs=100
+    #       )
 
     tuner = keras_tuner.RandomSearch(
           hypermodel,
@@ -149,21 +151,22 @@ def optimisation(x_train,y_train, training_loss):
           max_trials=len(hypermodel.model_configurations),
           overwrite=True,
           directory='output/hyper_tuning',
+          seed=1
           )
     tuner.search_space_summary()
     # Use the TensorBoard callback.
     # The logs will be write to "/tmp/tb_logs".
     callbacks=[
-        EarlyStopping(monitor='val_loss', patience=5, verbose=1),
+        EarlyStopping(monitor='val_loss', patience=3, verbose=1),
         ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=2, verbose=1, min_lr=1e-9)
         ]
     tuner.search(
         x=x_train,
         y=y_train,
-        epochs=3,
-        batch_size=1500,
-        validation_split=0.2,
-        callbacks=callbacks
+        epochs=5,
+        batch_size=750,
+        callbacks=callbacks,
+        validation_data=(Xtest, Ytest)
         )
 
     tuner.results_summary()
@@ -183,19 +186,20 @@ def final_model(Xtrain, Xtest, Ytrain, Ytest):
     
     subframes = list(factorint(numframes))[-1]
     
-    inputs = tf.keras.layers.Input(shape=(numframes,1,),name="input_1")
-    
-    x = tf.keras.layers.LSTM(64,input_shape=[None,numframes,1],return_sequences=False)(inputs)
-    #simple_rnn = tf.keras.layers.SimpleRNN(10,input_shape=[None, 1])
-    #x = tf.keras.layers.LSTM(32,return_sequences=False)(x)
-    # x = tf.keras.layers.Dense(128,activation='relu')(x)
-    # x = tf.keras.layers.Dropout(.1)(x)
-    x = tf.keras.layers.Dense(32,activation='relu')(x)
-    x = tf.keras.layers.Dense(64,activation='relu')(x)
-    x = tf.keras.layers.Dropout(rate=0.2)(x)
-    x = tf.keras.layers.Dense(128,activation='relu')(x)
-    x = tf.keras.layers.Dropout(rate=0.2)(x)
-    x = tf.keras.layers.Dense(32,activation='relu')(x)
+    inputs = tf.keras.layers.Input(shape=[numframes,1],name="input_1")
+    # x = tf.keras.layers.Flatten()(inputs)
+    x = tf.keras.layers.LSTM(64,return_sequences=False,kernel_regularizer=tf.keras.regularizers.l2(3e-2))(inputs)
+    # x = tf.keras.layers.LSTM(32,return_sequences=True)(x)
+    # x = tf.keras.layers.LSTM(16,return_sequences=False)(x)
+    # ,input_shape=[None,numframes,1]
+    # simple_rnn = tf.keras.layers.SimpleRNN(10,input_shape=[None, 1])
+
+    x = tf.keras.layers.Dense(32,kernel_initializer='glorot_uniform',activation='tanh')(x)
+    x = tf.keras.layers.Dense(32,kernel_initializer='glorot_uniform',activation='tanh')(x)
+    x = tf.keras.layers.Dense(64,kernel_initializer='glorot_uniform',activation='tanh')(x)
+    x = tf.keras.layers.Dense(128,kernel_initializer='glorot_uniform',activation='tanh')(x)
+
+
     x = tf.keras.layers.Dense(10,activation='softmax')(x)
     #output = simple_rnn(Xtrain.values.reshape(len(Xtrain),len(Xtrain.columns),1)/255)
     
@@ -204,17 +208,20 @@ def final_model(Xtrain, Xtest, Ytrain, Ytest):
     muclass = tf.keras.Model(inputs=inputs,outputs=output,name="rnn_model")
     
     muclass.summary()
-    initial_lr=0.001
-    learning_schedule = ExponentialDecay(initial_lr,decay_steps=1000,decay_rate=0.9,staircase=False)
-    adam = Adam(learning_rate=learning_schedule)
+    initial_lr=0.0001
+    learning_schedule = ExponentialDecay(initial_lr,decay_steps=1000,decay_rate=0.9,staircase=True)
+    adam = Adam(learning_rate=initial_lr, amsgrad=True)
     muclass.compile(optimizer=adam,
                        loss='sparse_categorical_crossentropy',
-                       metrics=['accuracy'])
+                       metrics=['sparse_categorical_accuracy'])
     
-    num_epochs = 1
-    batch = 1500
-    
-    history = muclass.fit(Xtrain, Ytrain, epochs=num_epochs,verbose=1,validation_data=(Xtest, Ytest),batch_size=batch,callbacks=[print_lr])
+    num_epochs = 200
+    batch = 500
+    callbacks=[
+        #EarlyStopping(monitor='val_loss', patience=10, verbose=1),
+        ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, verbose=1, min_lr=1e-9)
+        ]
+    history = muclass.fit(Xtrain, Ytrain, epochs=num_epochs,verbose=1,validation_data=(Xtest, Ytest),batch_size=batch,callbacks=callbacks)
     #,callbacks=[print_lr]
     return muclass,history
 
@@ -230,8 +237,8 @@ def plotter(history):
     plt.show()
     
     fig2,ax2 = plt.subplots()
-    ax2.plot(history.history['accuracy'], label='acc')
-    ax2.plot(history.history['val_accuracy'], label='val_acc')
+    ax2.plot(history.history['sparse_categorical_accuracy'], label='acc')
+    ax2.plot(history.history['val_sparse_categorical_accuracy'], label='val_acc')
     ax2.set_title('Training and Validation accuracy per epoch')
     ax2.set_xlabel('# Epoch')
     ax2.set_ylabel('accuracy')
@@ -243,8 +250,8 @@ def plotter(history):
 
 Xtrain, Xtest, Ytrain, Ytest = load_data()
 
-optimisation(Xtrain,Ytrain, 'sparse_categorical_crossentropy')
-#model,history = final_model(Xtrain, Xtest, Ytrain, Ytest)
+#optimisation(Xtrain, Xtest, Ytrain, Ytest, 'sparse_categorical_crossentropy')
+model,history = final_model(Xtrain, Xtest, Ytrain, Ytest)
 
-#plotter(history)
+plotter(history)
 
